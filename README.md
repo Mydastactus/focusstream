@@ -61,6 +61,30 @@ curl -X POST http://localhost:8000/api/v1/sprints \
        "duration_days":14,"sources_allowed":["rss","newsletters","podcasts"]}'
 ```
 
+## Deploy (Render)
+
+This is a **backend** — it can't run on static hosting (GitHub Pages, etc.); it
+needs a server runtime plus Postgres and Redis. [`render.yaml`](render.yaml) is a
+Render Blueprint that provisions the whole stack.
+
+1. Push this repo to GitHub.
+2. Render → **New → Blueprint** → pick the repo. It reads `render.yaml` and
+   creates: `focusstream-api` (web), `focusstream-worker`, `focusstream-beat`,
+   `focusstream-db` (Postgres + pgvector), `focusstream-redis`.
+3. When prompted, set the secrets: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`.
+4. First deploy runs `alembic upgrade head` automatically (creates the `vector`
+   extension + schema). To seed demo data, open the web service's **Shell** and
+   run `python -m app.scripts.seed`.
+
+The API is then live at `https://focusstream-api.onrender.com` (`/docs` for
+Swagger). Point the mobile app's `API_BASE_URL` at it, and set
+`CORS_ALLOW_ORIGINS` to the app's web origin for production.
+
+> Background workers aren't free-tier on Render (~Starter each). To run two
+> services instead of three, drop `focusstream-beat` and give the worker embedded
+> beat: `celery -A app.core.celery_app.celery_app worker -B` (fine for a single
+> worker).
+
 ## Tests
 
 ```bash

@@ -1,0 +1,112 @@
+# Render Blueprint for FocusStream.
+#
+# Brings up the full stack: FastAPI web service, Celery worker, Celery beat,
+# managed PostgreSQL (with pgvector), and Redis (Celery broker/result backend).
+#
+# Deploy: push this repo to GitHub, then in Render -> New -> Blueprint, pick the
+# repo. Render reads this file and provisions everything. You'll be prompted for
+# the two secret keys (OPENAI_API_KEY, ANTHROPIC_API_KEY) on first deploy.
+#
+# pgvector: Render's managed Postgres supports the `vector` extension; migration
+# 0001 runs `CREATE EXTENSION IF NOT EXISTS vector` and builds the HNSW index.
+#
+# Cost note: Render background workers (worker, beat) are not free-tier — they
+# need at least a Starter instance. To run on two services instead of three,
+# delete the `focusstream-beat` service and change the worker's dockerCommand to
+# embed the scheduler:  celery -A app.core.celery_app.celery_app worker -B --loglevel=info
+# (embedded beat is fine for a single worker; split them again before scaling out).
+
+databases:
+  - name: focusstream-db
+    databaseName: focusstream
+    user: focusstream
+    plan: free # NOTE: free Postgres is time-limited — bump to a paid plan for prod
+    postgresMajorVersion: "16"
+
+envVarGroups:
+  - name: focusstream-secrets
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false # set in the Render dashboard (never committed)
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CORS_ALLOW_ORIGINS
+        value: "*" # lock down to the app's web origin(s) for production
+
+services:
+  # --- Redis: Celery broker + result backend ---
+  - type: redis
+    name: focusstream-redis
+    plan: free
+    maxmemoryPolicy: noeviction # a broker must not evict queued tasks
+    ipAllowList: [] # internal-only (no public access)
+
+  # --- FastAPI web service ---
+  - type: web
+    name: focusstream-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    # Migrations run once per deploy (before the new version goes live), not on
+    # every container start.
+    preDeployCommand: alembic upgrade head
+    dockerCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - fromGroup: focusstream-secrets
+      - key: POSTGRES_HOST
+        fromDatabase: { name: focusstream-db, property: host }
+      - key: POSTGRES_PORT
+        fromDatabase: { name: focusstream-db, property: port }
+      - key: POSTGRES_USER
+        fromDatabase: { name: focusstream-db, property: user }
+      - key: POSTGRES_PASSWORD
+        fromDatabase: { name: focusstream-db, property: password }
+      - key: POSTGRES_DB
+        fromDatabase: { name: focusstream-db, property: database }
+      - key: REDIS_URL
+        fromService: { type: redis, name: focusstream-redis, property: connectionString }
+
+  # --- Celery worker: embed -> match -> synthesize, + ingestion/transcription ---
+  - type: worker
+    name: focusstream-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    dockerCommand: celery -A app.core.celery_app.celery_app worker --loglevel=info
+    envVars:
+      - fromGroup: focusstream-secrets
+      - key: POSTGRES_HOST
+        fromDatabase: { name: focusstream-db, property: host }
+      - key: POSTGRES_PORT
+        fromDatabase: { name: focusstream-db, property: port }
+      - key: POSTGRES_USER
+        fromDatabase: { name: focusstream-db, property: user }
+      - key: POSTGRES_PASSWORD
+        fromDatabase: { name: focusstream-db, property: password }
+      - key: POSTGRES_DB
+        fromDatabase: { name: focusstream-db, property: database }
+      - key: REDIS_URL
+        fromService: { type: redis, name: focusstream-redis, property: connectionString }
+
+  # --- Celery beat: schedules source polling ---
+  - type: worker
+    name: focusstream-beat
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    dockerCommand: celery -A app.core.celery_app.celery_app beat --loglevel=info
+    envVars:
+      - fromGroup: focusstream-secrets
+      - key: POSTGRES_HOST
+        fromDatabase: { name: focusstream-db, property: host }
+      - key: POSTGRES_PORT
+        fromDatabase: { name: focusstream-db, property: port }
+      - key: POSTGRES_USER
+        fromDatabase: { name: focusstream-db, property: user }
+      - key: POSTGRES_PASSWORD
+        fromDatabase: { name: focusstream-db, property: password }
+      - key: POSTGRES_DB
+        fromDatabase: { name: focusstream-db, property: database }
+      - key: REDIS_URL
+        fromService: { type: redis, name: focusstream-redis, property: connectionString }
