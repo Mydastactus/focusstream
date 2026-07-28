@@ -8,6 +8,11 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # --- API / CORS ---
+    # Comma-separated allowed origins. "*" allows all (fine for dev / native
+    # mobile clients). Lock this down to the app's web origin(s) in production.
+    cors_allow_origins: str = "*"
+
     # --- Postgres ---
     postgres_user: str = "focusstream"
     postgres_password: str = "focusstream"

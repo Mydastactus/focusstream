@@ -4,14 +4,14 @@ from pydantic import BaseModel
 class FeedSource(BaseModel):
     name: str
     type: str
-    avatar_url: str | None = None
+    avatar_url: str | None = None  # null if the source has no avatar
 
 
 class FeedContent(BaseModel):
     title: str
-    thumbnail_url: str | None = None
-    ai_summary: str | None = None
-    estimated_read_time: str | None = None
+    thumbnail_url: str | None = None  # null if the item has no image
+    ai_summary: str | None = None  # null on contextual-tier cards (not synthesized)
+    estimated_read_time: str  # always populated (guaranteed by the serializer)
 
 
 class FeedUserActions(BaseModel):
